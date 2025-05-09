@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import os
 import time
+import tomllib
+
 import pygame as pg
 
 import io
@@ -14,19 +16,22 @@ from plot_box import PlotBox
 from fish import Fish
 from arena import Arena
 
+with open(os.path.join(os.getcwd(), 'fishbowl_regular', 'fishbowl_config.toml'), "rb") as f:
+    config = tomllib.load(f)
+print(config)
+
 os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (0,0)
 
 pg.init()
 
 UPDATEGFX = pg.USEREVENT + 1
 
-RES = (1000, 800)
-calc_target_FPS = 300
-visual_target_FPS = 60
-sim_speed_mult = 1
+RES = config['pygame']['resolution']
+calc_target_FPS = config['FPS']['calc_target_FPS']
+visual_target_FPS = config['FPS']['visual_target_FPS']
 clock = pg.time.Clock()
 
-screen = pg.display.set_mode(RES, pg.RESIZABLE)
+screen = pg.display.set_mode(RES, pg.RESIZABLE | pg.HWSURFACE | pg.DOUBLEBUF)
 pg.display._set_autoresize(False)
 
 fps_counter = FPSCounter(screen, pg.font.Font(None, 36), clock, (0,255,0), (0, 0))
@@ -36,30 +41,43 @@ fps_counter.pos = (screen.get_width() - 120, 20)
 # =======================================================
 # initialization for core logic
 
-arena_dimensions = (100,100)
-arena_surface_dims = (700,700)
-arena_surface_location = (50,50)
+sim_speed_mult = config['simulation']['sim_speed_mult']
+
+arena_dimensions = config['simulation']['arena']['arena_dimensions']
+arena_surface_dims = config['simulation']['arena']['arena_surface_dims']
+arena_surface_location = config['simulation']['arena']['arena_surface_location']
+arena_sprite_path = config['simulation']['arena']['arena_sprite_path']
 arena = Arena(
     dimensions=arena_dimensions,    
     gfx_arena_surface_dims=arena_surface_dims,
     gfx_arena_surface_location=arena_surface_location,
     render_surface=screen,
-    bgd_sprite=pg.image.load(os.path.join(str(os.getcwd()), 'assets', 'reef_650x650_darker.png')).convert_alpha(),
+    bgd_sprite=pg.image.load(str(os.getcwd() + arena_sprite_path)).convert_alpha(),
 )
 
-N_fishes = 100
-N_species = 6
-N_fish_sprites = 3
-#species_colors = [np.random.random()*360 for s in range(N_species)]
-species_colors = np.linspace(0,360,N_species+1)[:-1]
-min_fish_vel, max_fish_vel = 8 / calc_target_FPS * sim_speed_mult, 10 / calc_target_FPS * sim_speed_mult # arena dim units per calc frame
-min_fish_size_coeff, max_fish_size_coeff = 0.8 , 1.30
-turn_speed = 3.14 / calc_target_FPS * sim_speed_mult # radian units per calc frame
-repelling_distance = 1.5 # arena dim units
-aligning_distance = 3.3 # arena dim units
+N_fishes = config['simulation']['fishes']['N_fishes']
+N_species = config['simulation']['fishes']['N_species']
+min_fish_vel = config['simulation']['fishes']['min_fish_vel'] / calc_target_FPS * sim_speed_mult # arena dim units per calc frame
+max_fish_vel = config['simulation']['fishes']['max_fish_vel'] / calc_target_FPS * sim_speed_mult # arena dim units per calc frame
+turn_speed = config['simulation']['fishes']['turn_speed'] / calc_target_FPS * sim_speed_mult # radian units per calc frame
+repelling_distance = config['simulation']['fishes']['repelling_distance'] # arena dim units
+aligning_distance = config['simulation']['fishes']['aligning_distance'] # arena dim units
 
+#species_colors = [np.random.random()*360 for s in range(N_species)]
+N_fish_sprites = config['simulation']['fishes']['gfx']['N_fish_sprites']
+min_fish_visual_size_coeff = config['simulation']['fishes']['gfx']['min_fish_visual_size_coeff'] 
+max_fish_visual_size_coeff = config['simulation']['fishes']['gfx']['max_fish_visual_size_coeff']
+fish_sprite_template_path = config['simulation']['fishes']['gfx']['fish_sprite_template_path']
+
+# initialize fishes
 fish_list = []
-fish_sprites = [pg.image.load(os.path.join(str(os.getcwd()), 'assets', f'fish_sprite_{i % N_fish_sprites + 1}_30x30_red_fill.png')).convert_alpha() for i in range(N_species)]
+fish_sprites = [
+    pg.image.load(
+        str(os.getcwd() + ''.join([fish_sprite_template_path.split('{i}')[0], str(i % N_fish_sprites + 1), fish_sprite_template_path.split('{i}')[1]]))
+    ).convert_alpha() 
+    for i in range(N_species)
+]
+species_colors = np.linspace(0,360,N_species+1)[:-1]
 species_sprite_list = [pg.transform.hsl(fish_sprites[i], species_colors[i % N_species], -0.3, -0.2) for i in range(N_species)]
 
 for i in range(N_fishes):
@@ -73,7 +91,7 @@ for i in range(N_fishes):
         vel=np.random.random()*max_fish_vel,
         species=new_fish_species,
         gfx_fish_sprite=new_fish_sprite, gfx_surface=arena.gfx_surface,
-        size_coeff=min_fish_size_coeff + np.random.random()*(max_fish_size_coeff-min_fish_size_coeff),
+        size_coeff=min_fish_visual_size_coeff + np.random.random()*(max_fish_visual_size_coeff-min_fish_visual_size_coeff),
     )
     fish_list.append(new_fish)
 
@@ -109,7 +127,8 @@ while not done:
     calc_tick += 1
     if calc_tick>=calc_tick_loopback: calc_tick = 0
 
-    if calc_tick % 1 == 0:
+    # tick fish brains every N frames
+    if calc_tick % 1 == 3:
 
         fish_coords = np.array([[fish.pos[0] for fish in fish_list],[fish.pos[1] for fish in fish_list]]).T
         fish_lookup_tree = scipy.spatial.KDTree(fish_coords, leafsize=5)
